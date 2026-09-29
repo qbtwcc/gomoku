@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>五子棋 · 本地测试版</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #2b2d42 0%, #1f2233 100%);
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #eee;
+    padding: 20px;
+  }
+  h1 { font-size: 28px; margin-bottom: 6px; letter-spacing: 2px; }
+  .sub { color: #9aa0b5; font-size: 13px; margin-bottom: 18px; }
+  .board-wrap { position: relative; background: #dcb35c; padding: 14px; border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  canvas { display: block; cursor: pointer; background: #e9c878; border-radius: 6px; }
+  .status {
+    margin-top: 18px; font-size: 18px; font-weight: bold; min-height: 28px;
+    padding: 6px 18px; border-radius: 20px; background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .controls { margin-top: 14px; display: flex; gap: 12px; }
+  button {
+    font-size: 15px; padding: 9px 22px; border: none; border-radius: 22px; cursor: pointer;
+    background: #4cc9f0; color: #1f2233; font-weight: bold; transition: transform .1s, opacity .2s;
+  }
+  button:hover { transform: scale(1.04); }
+  button.secondary { background: #6c757d; color: #fff; }
+  .hint { margin-top: 14px; font-size: 12px; color: #7d8499; }
+</style>
+</head>
+<body>
+  <h1>五 子 棋</h1>
+  <div class="sub">双人对战 · 15×15 棋盘 · 本地运行</div>
+
+  <div class="board-wrap">
+    <canvas id="board" width="600" height="600"></canvas>
+  </div>
+
+  <div class="status" id="status">黑棋先行，点击棋盘落子</div>
+
+  <div class="controls">
+    <button id="restart">重新开始</button>
+    <button id="undo" class="secondary">悔棋</button>
+  </div>
+  <div class="hint">先连成五子（横/竖/斜）的一方获胜</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const status = document.getElementById('status');
+
+  const N = 15;             // 棋盘线数
+  const SIZE = 600;         // canvas 像素
+  const MARGIN = 30;        // 边缘留白
+  const STEP = (SIZE - MARGIN * 2) / (N - 1); // 每格间距
+  const RADIUS = STEP * 0.42;
+
+  let board = [];           // 0 空，1 黑，2 白
+  let current = 1;          // 当前执子 1黑 2白
+  let gameOver = false;
+  let history = [];         // 悔棋用
+
+  function init() {
+    board = Array.from({ length: N }, () => Array(N).fill(0));
+    current = 1;
+    gameOver = false;
+    history = [];
+    status.textContent = '黑棋先行，点击棋盘落子';
+    draw();
+  }
+
+  function draw() {
+    // 背景
+    ctx.fillStyle = '#e9c878';
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // 网格
+    ctx.strokeStyle = '#8a6a2b';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < N; i++) {
+      const p = MARGIN + i * STEP;
+      ctx.beginPath(); ctx.moveTo(MARGIN, p); ctx.lineTo(SIZE - MARGIN, p); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p, MARGIN); ctx.lineTo(p, SIZE - MARGIN); ctx.stroke();
+    }
+
+    // 星位（天元 + 四个星）
+    const stars = [[7,7],[3,3],[3,11],[11,3],[11,11]];
+    ctx.fillStyle = '#8a6a2b';
+    stars.forEach(([r,c]) => {
+      ctx.beginPath();
+      ctx.arc(MARGIN + c * STEP, MARGIN + r * STEP, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // 棋子
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (board[r][c] === 0) continue;
+        const x = MARGIN + c * STEP;
+        const y = MARGIN + r * STEP;
+        const black = board[r][c] === 1;
+
+        // 阴影
+        ctx.beginPath();
+        ctx.arc(x + 1.5, y + 2, RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,.25)';
+        ctx.fill();
+
+        // 棋子
+        ctx.beginPath();
+        ctx.arc(x, y, RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = black ? '#1a1a1a' : '#f5f5f5';
+        ctx.fill();
+        ctx.strokeStyle = black ? '#000' : '#ccc';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // 高光
+        ctx.beginPath();
+        ctx.arc(x - RADIUS*0.3, y - RADIUS*0.3, RADIUS*0.22, 0, Math.PI * 2);
+        ctx.fillStyle = black ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.9)';
+        ctx.fill();
+      }
+    }
+  }
+
+  function checkWin(r, c, player) {
+    const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+    for (const [dr, dc] of dirs) {
+      let count = 1;
+      // 正向
+      for (let s = 1; s < 5; s++) {
+        const nr = r + dr*s, nc = c + dc*s;
+        if (nr < 0 || nr >= N || nc < 0 || nc >= N || board[nr][nc] !== player) break;
+        count++;
+      }
+      // 反向
+      for (let s = 1; s < 5; s++) {
+        const nr = r - dr*s, nc = c - dc*s;
+        if (nr < 0 || nr >= N || nc < 0 || nc >= N || board[nr][nc] !== player) break;
+        count++;
+      }
+      if (count >= 5) return true;
+    }
+    return false;
+  }
+
+  function isFull() {
+    for (let r = 0; r < N; r++)
+      for (let c = 0; c < N; c++)
+        if (board[r][c] === 0) return false;
+    return true;
+  }
+
+  canvas.addEventListener('click', function (e) {
+    if (gameOver) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    const x = (e.clientX - rect.left) * scale;
+    const y = (e.clientY - rect.top) * scale;
+    const c = Math.round((x - MARGIN) / STEP);
+    const r = Math.round((y - MARGIN) / STEP);
+    if (r < 0 || r >= N || c < 0 || c >= N) return;
+    if (board[r][c] !== 0) return;
+
+    board[r][c] = current;
+    history.push({ r, c, player: current });
+    draw();
+
+    if (checkWin(r, c, current)) {
+      gameOver = true;
+      status.textContent = (current === 1 ? '黑棋' : '白棋') + ' 获胜！🎉';
+      return;
+    }
+    if (isFull()) {
+      gameOver = true;
+      status.textContent = '平局，棋盘已满';
+      return;
+    }
+    current = current === 1 ? 2 : 1;
+    status.textContent = (current === 1 ? '黑棋' : '白棋') + ' 落子';
+  });
+
+  document.getElementById('restart').addEventListener('click', init);
+
+  document.getElementById('undo').addEventListener('click', function () {
+    if (gameOver || history.length === 0) return;
+    const last = history.pop();
+    board[last.r][last.c] = 0;
+    current = last.player;
+    gameOver = false;
+    status.textContent = (current === 1 ? '黑棋' : '白棋') + ' 落子（已悔棋）';
+    draw();
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
